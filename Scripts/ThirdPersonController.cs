@@ -1,4 +1,4 @@
-﻿ using UnityEngine;
+﻿using UnityEngine;
 #if ENABLE_INPUT_SYSTEM 
 using UnityEngine.InputSystem;
 
@@ -152,8 +152,9 @@ namespace StarterAssets
 
         Rigidbody rb;
 
-      
-
+        private bool isCurrentlyInsideVehicle = false;
+        private float teleportTimer = 0f;
+        private const float TELEPORT_DELAY = 4f;
 
         private void Start()
         {
@@ -213,8 +214,26 @@ namespace StarterAssets
             GroundedCheck();
 
             if (isSumoVehicle){
-                MoveSumo();
-            } else{
+                bool isInsideVehicle = PedestrianIsInsideVehicle(ref sock, id);
+                
+                if (isInsideVehicle)
+                {
+                    teleportTimer += Time.deltaTime;
+                    if (teleportTimer >= TELEPORT_DELAY)
+                    {
+                        TeleportSumo();
+                    } else {
+                        MoveSumo();
+                    }
+                }
+                else
+                {
+                    teleportTimer = 0f;  // Reset timer when not inside vehicle
+                    MoveSumo();
+                }
+                
+                isCurrentlyInsideVehicle = isInsideVehicle;
+            } else {
                 Debug.LogWarning("Set to Sumo vehicle, manual is not implemented");
             }
         }
@@ -245,6 +264,15 @@ namespace StarterAssets
         }
 
         
+        private void TeleportSumo(){
+            Debug.LogWarning("Teleporting Sumo");   
+            Vector2 pos = PedestrianGetPosition(ref sock, id);
+            transform.position = new Vector3(pos.x, 0.0f, pos.y);
+            rbMarker.x = pos.x;
+            rbMarker.y = pos.y; 
+            lookAheadMarker = rbMarker;
+        }   
+
         private void MoveSumo(){
             // rb.isKinematic = true;
             rbMarker.x = rb.position.x;
