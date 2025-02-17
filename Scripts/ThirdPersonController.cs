@@ -5,7 +5,8 @@ using UnityEngine.InputSystem;
 #endif
 
 using tumvt.sumounity;
-using static tumvt.sumounity.Vehicle;  
+using static tumvt.sumounity.Vehicle;
+using tum_bus_controller;
 
 /* Note: animations are called via the controller for both the character and capsule using animator null checks
  */
@@ -13,9 +14,6 @@ using static tumvt.sumounity.Vehicle;
 namespace tumvt.sumounity.PedestrianModel
 {
     [RequireComponent(typeof(CharacterController))]
-#if ENABLE_INPUT_SYSTEM 
-    [RequireComponent(typeof(PlayerInput))]
-#endif
     public class ThirdPersonController : MonoBehaviour, IVehicleController {
 
         [Header("SUMO Integration")]
@@ -37,6 +35,11 @@ namespace tumvt.sumounity.PedestrianModel
         public bool isSumoVehicle = true;
         private Vector2 rbMarker;
         private float stopState;
+
+        [SerializeField]
+        private bool isInsideSumoVehicle = false;
+        private float teleportTimer = 0f;
+        private const float TELEPORT_DELAY = 4f;
 
         [Header("Player")]
         [Tooltip("Move speed of the character in m/s")]
@@ -160,9 +163,11 @@ namespace tumvt.sumounity.PedestrianModel
 
         Rigidbody rb;
 
-        private bool isCurrentlyInsideVehicle = false;
-        private float teleportTimer = 0f;
-        private const float TELEPORT_DELAY = 4f;
+        GameObject bus;
+        BusDoorController busDoorController;
+        Vector3 closestDoor;
+        GameObject closestSeat;
+        bool wentToDoorAlready = false;
 
         // UNITY COROUTINES
         private void Start()
@@ -213,10 +218,42 @@ namespace tumvt.sumounity.PedestrianModel
 
             if (isSumoVehicle)
             {
-                bool isInsideVehicle = PedestrianIsInsideVehicle(ref sock, id);
+                isInsideSumoVehicle = PedestrianIsInsideVehicle(ref sock, id);
 
-                if (isInsideVehicle)
+                if (isInsideSumoVehicle)
                 {
+                    // 1. Get Bus Object
+                    if(bus == null)
+                    {
+                        string busname = "f_6.0-bus-Lowpoly_CityBus_blue_with_door_markers_HDRP";
+                        bus = GameObject.Find(busname);
+                        busDoorController = bus.GetComponent<BusDoorController>();
+
+                        if (busDoorController != null && !busDoorController.IsDoorOpen)
+                        {
+                            busDoorController.OpenDoor();
+                            //bus.SendMessage("OpenDoor");
+                        }
+
+                        closestDoor = busDoorController.GetClosetsDoorPosition(transform.position);
+                        closestSeat = busDoorController.GetClosetsAvailableSeat(closestDoor);
+                    }
+                    // 2. Overwrite lookaheadposition
+                    if (Vector3.Distance(transform.position, closestDoor) > 0.5f && !wentToDoorAlready)
+                    {
+                        lookAheadMarker = new Vector2(closestDoor.x, closestDoor.z);
+                    }
+                    else if (Vector3.Distance(transform.position, closestDoor) <= 0.5f && !wentToDoorAlready)
+                    {
+                        wentToDoorAlready = true;
+                        lookAheadMarker = new Vector2(closestSeat.transform.position.x, closestSeat.transform.position.z);
+                    } else if (Vector3.Distance(transform.position, closestSeat.transform.position) <= 0.5f && wentToDoorAlready)
+                    {
+                        transform.parent = bus.transform;
+                        isSumoVehicle = false;
+                    }
+
+
                     teleportTimer += Time.deltaTime;
                     if (teleportTimer >= TELEPORT_DELAY)
                     {
@@ -226,6 +263,7 @@ namespace tumvt.sumounity.PedestrianModel
                     {
                         MoveSumo();
                     }
+                    //MoveSumo();
                 }
                 else
                 {
@@ -234,8 +272,6 @@ namespace tumvt.sumounity.PedestrianModel
 
                     
                 }
-
-                isCurrentlyInsideVehicle = isInsideVehicle;
             }
             else
             {
