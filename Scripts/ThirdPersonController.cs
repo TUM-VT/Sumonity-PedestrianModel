@@ -10,7 +10,7 @@ using static tumvt.sumounity.Vehicle;
 /* Note: animations are called via the controller for both the character and capsule using animator null checks
  */
 
-namespace StarterAssets
+namespace tumvt.sumounity.PedestrianModel
 {
     [RequireComponent(typeof(CharacterController))]
 #if ENABLE_INPUT_SYSTEM 
@@ -18,14 +18,22 @@ namespace StarterAssets
 #endif
     public class ThirdPersonController : MonoBehaviour, IVehicleController {
 
-        public string id { get; set; } // SUMO Identifiert in Vehicle Dictionary
-
         [Header("SUMO Integration")]
+        [Tooltip("SUMO Vehicle/Pedestrian ID")]
+        [SerializeField]
+        private string _id;
+        public string id { 
+            get { return _id; }
+            set { _id = value; } } // SUMO Identifiert in Vehicle Dictionary
+        
         private SumoSocketClient sock;  // Reference to SUMO socket client
         private PIDController pidControllerSpeed;
         private PIDController pidControllerDist;
         private bool bDrawGizmo;
+
+        [SerializeField]
         private Vector2 lookAheadMarker;
+
         public bool isSumoVehicle = true;
         private Vector2 rbMarker;
         private float stopState;
@@ -156,6 +164,7 @@ namespace StarterAssets
         private float teleportTimer = 0f;
         private const float TELEPORT_DELAY = 4f;
 
+        // UNITY COROUTINES
         private void Start()
         {
             _cinemachineTargetYaw = CinemachineCameraTarget.transform.rotation.eulerAngles.y;
@@ -182,20 +191,61 @@ namespace StarterAssets
 
         }
 
-
         void OnDrawGizmos(){
+            float gizmoSize = 0.5f;
             if (bDrawGizmo){
                 Gizmos.color = Color.red;
                 Vector3 LadPoint = new Vector3(lookAheadMarker.x, 0.1f, lookAheadMarker.y);
-                Gizmos.DrawSphere(LadPoint, 1.0f);
+                Gizmos.DrawSphere(LadPoint, gizmoSize);
 
                 Gizmos.color = Color.blue;
                 Vector3 rbMarkerPoint = new Vector3(rbMarker.x, 0.1f, rbMarker.y);
-                Gizmos.DrawSphere(rbMarkerPoint, 1.0f);
+                Gizmos.DrawSphere(rbMarkerPoint, gizmoSize);
             }
         }
 
-         private void InitializeSumoIntegration()
+        private void Update()
+        {
+            _hasAnimator = TryGetComponent(out _animator);
+
+            JumpAndGravity();
+            GroundedCheck();
+
+            if (isSumoVehicle)
+            {
+                bool isInsideVehicle = PedestrianIsInsideVehicle(ref sock, id);
+
+                if (isInsideVehicle)
+                {
+                    teleportTimer += Time.deltaTime;
+                    if (teleportTimer >= TELEPORT_DELAY)
+                    {
+                        TeleportSumo();
+                    }
+                    else
+                    {
+                        MoveSumo();
+                    }
+                }
+                else
+                {
+                    teleportTimer = 0f;  // Reset timer when not inside vehicle
+                    MoveSumo();
+
+                    
+                }
+
+                isCurrentlyInsideVehicle = isInsideVehicle;
+            }
+            else
+            {
+                Debug.LogWarning("Set to Sumo vehicle, manual is not implemented");
+            }
+        }
+
+
+        // SUMONITY
+        private void InitializeSumoIntegration()
         {
             // Get the socketclient with the step info
             sock = GameObject.FindObjectOfType<SumoSocketClient>();
@@ -206,98 +256,43 @@ namespace StarterAssets
             bDrawGizmo = true;
         }
 
-        private void Update()
+        private void TeleportSumo()
         {
-            _hasAnimator = TryGetComponent(out _animator);
-
-            JumpAndGravity();
-            GroundedCheck();
-
-            if (isSumoVehicle){
-                bool isInsideVehicle = PedestrianIsInsideVehicle(ref sock, id);
-                
-                if (isInsideVehicle)
-                {
-                    teleportTimer += Time.deltaTime;
-                    if (teleportTimer >= TELEPORT_DELAY)
-                    {
-                        TeleportSumo();
-                    } else {
-                        MoveSumo();
-                    }
-                }
-                else
-                {
-                    teleportTimer = 0f;  // Reset timer when not inside vehicle
-                    MoveSumo();
-                }
-                
-                isCurrentlyInsideVehicle = isInsideVehicle;
-            } else {
-                Debug.LogWarning("Set to Sumo vehicle, manual is not implemented");
-            }
-        }
-
-
-        private void AssignAnimationIDs()
-        {
-            _animIDSpeed = Animator.StringToHash("Speed");
-            _animIDGrounded = Animator.StringToHash("Grounded");
-            _animIDJump = Animator.StringToHash("Jump");
-            _animIDFreeFall = Animator.StringToHash("FreeFall");
-            _animIDMotionSpeed = Animator.StringToHash("MotionSpeed");
-        }
-
-        private void GroundedCheck()
-        {
-            // set sphere position, with offset
-            Vector3 spherePosition = new Vector3(transform.position.x, transform.position.y - GroundedOffset,
-                transform.position.z);
-            Grounded = Physics.CheckSphere(spherePosition, GroundedRadius, GroundLayers,
-                QueryTriggerInteraction.Ignore);
-
-            // update animator if using character
-            if (_hasAnimator)
-            {
-                _animator.SetBool(_animIDGrounded, Grounded);
-            }
-        }
-
-        
-        private void TeleportSumo(){
-            Debug.LogWarning("Teleporting Sumo");   
+            Debug.LogWarning("Teleporting Sumo");
             Vector2 pos = PedestrianGetPosition(ref sock, id);
             transform.position = new Vector3(pos.x, 0.0f, pos.y);
             rbMarker.x = pos.x;
-            rbMarker.y = pos.y; 
+            rbMarker.y = pos.y;
             lookAheadMarker = rbMarker;
-        }   
+        }
 
-        private void MoveSumo(){
+        private void MoveSumo()
+        {
             // rb.isKinematic = true;
             rbMarker.x = rb.position.x;
             rbMarker.y = rb.position.z;
 
-            var (worldMovementVector,worldMovementSpeed,worldMovementDirection,absolutePositionError,lookAheadPoint) = 
+            var (worldMovementVector, worldMovementSpeed, worldMovementDirection, absolutePositionError, lookAheadPoint) =
                 SumoPedestrianControl(
-                    ref sock, 
-                    id, 
+                    ref sock,
+                    id,
                     rb,
                     ref lookAheadMarker
                 );
 
-           // set target speed based on move speed, sprint speed and if sprint is pressed
-            
+            // set target speed based on move speed, sprint speed and if sprint is pressed
+
             // increase speed if error is large:
             float targetSpeed = worldMovementSpeed;
-            if (absolutePositionError > 0.1f){
+            if (absolutePositionError > 0.1f)
+            {
                 targetSpeed = SprintSpeed;
             }
             // float targetSpeed = worldMovementSpeed;
 
             // _input.move = worldMovementVector;
 
-            if (worldMovementVector == Vector2.zero) targetSpeed = 0;    
+            if (worldMovementVector == Vector2.zero) targetSpeed = 0;
 
 
             // a reference to the players current horizontal velocity
@@ -318,7 +313,7 @@ namespace StarterAssets
                 // round speed to 3 decimal places
                 _speed = Mathf.Round(_speed * 1000f) / 1000f;
 
-                Debug.Log($"_speed: {_speed}");
+                //Debug.Log($"_speed: {_speed}");
             }
             else
             {
@@ -342,8 +337,7 @@ namespace StarterAssets
                 transform.rotation = Quaternion.Euler(0.0f, rotation, 0.0f);
             }
 
-            _controller.Move(inputDirection.normalized * (_speed * Time.deltaTime) +
-                            new Vector3(0.0f, _verticalVelocity, 0.0f) * Time.deltaTime);
+            _controller.Move(inputDirection.normalized * (_speed * Time.deltaTime) + new Vector3(0.0f, _verticalVelocity, 0.0f) * Time.deltaTime);
 
             // update animator if using character
             if (_hasAnimator)
@@ -353,7 +347,31 @@ namespace StarterAssets
             }
         }
 
-    
+
+        // Other Methods
+        private void AssignAnimationIDs()
+        {
+            _animIDSpeed = Animator.StringToHash("Speed");
+            _animIDGrounded = Animator.StringToHash("Grounded");
+            _animIDJump = Animator.StringToHash("Jump");
+            _animIDFreeFall = Animator.StringToHash("FreeFall");
+            _animIDMotionSpeed = Animator.StringToHash("MotionSpeed");
+        }
+
+        private void GroundedCheck()
+        {
+            // set sphere position, with offset
+            Vector3 spherePosition = new Vector3(transform.position.x, transform.position.y - GroundedOffset,
+                transform.position.z);
+            Grounded = Physics.CheckSphere(spherePosition, GroundedRadius, GroundLayers,
+                QueryTriggerInteraction.Ignore);
+
+            // update animator if using character
+            if (_hasAnimator)
+            {
+                _animator.SetBool(_animIDGrounded, Grounded);
+            }
+        }
 
         private void JumpAndGravity()
         {
