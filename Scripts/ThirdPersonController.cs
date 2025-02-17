@@ -231,39 +231,45 @@ namespace tumvt.sumounity.PedestrianModel
 
                         if (busDoorController != null && !busDoorController.IsDoorOpen)
                         {
-                            busDoorController.OpenDoor();
-                            //bus.SendMessage("OpenDoor");
+                            //Debug.Log("Opening door");
+                            //busDoorController.OpenDoor();
+                            bus.SendMessage("OpenDoor");
                         }
 
-                        closestDoor = busDoorController.GetClosetsDoorPosition(transform.position);
+                        closestDoor = busDoorController.GetClosetsDoorPosition(rb.transform.position);
                         closestSeat = busDoorController.GetClosetsAvailableSeat(closestDoor);
                     }
                     // 2. Overwrite lookaheadposition
-                    if (Vector3.Distance(transform.position, closestDoor) > 0.5f && !wentToDoorAlready)
+                    Vector2 manualLookAheadPoint = Vector2.zero;
+                    Vector2 egoPos = new Vector2(transform.position.x, transform.position.z);
+                    Vector2 closestDoorPos = new Vector2(closestDoor.x, closestDoor.z);
+                    if (Vector2.Distance(egoPos, closestDoorPos) > 0.5f && !wentToDoorAlready)
                     {
-                        lookAheadMarker = new Vector2(closestDoor.x, closestDoor.z);
+                        manualLookAheadPoint = closestDoorPos;
                     }
-                    else if (Vector3.Distance(transform.position, closestDoor) <= 0.5f && !wentToDoorAlready)
+                    else if (Vector2.Distance(egoPos, closestDoorPos) <= 0.5f && !wentToDoorAlready)
                     {
                         wentToDoorAlready = true;
-                        lookAheadMarker = new Vector2(closestSeat.transform.position.x, closestSeat.transform.position.z);
-                    } else if (Vector3.Distance(transform.position, closestSeat.transform.position) <= 0.5f && wentToDoorAlready)
+                        
+                        manualLookAheadPoint = new Vector2(closestSeat.transform.position.x, closestSeat.transform.position.z);
+                    } else if (Vector2.Distance(egoPos, new Vector2(closestSeat.transform.position.x, closestSeat.transform.position.z)) <= 0.5f && wentToDoorAlready)
                     {
+                        //isSumoVehicle = false;
                         transform.parent = bus.transform;
-                        isSumoVehicle = false;
+                        manualLookAheadPoint = new Vector2(transform.position.x, transform.position.z);
                     }
 
 
-                    teleportTimer += Time.deltaTime;
-                    if (teleportTimer >= TELEPORT_DELAY)
-                    {
-                        TeleportSumo();
-                    }
-                    else
-                    {
-                        MoveSumo();
-                    }
-                    //MoveSumo();
+                    //teleportTimer += Time.deltaTime;
+                    //if (teleportTimer >= TELEPORT_DELAY)
+                    //{
+                    //    TeleportSumo();
+                    //}
+                    //else
+                    //{
+                    //    MoveSumo();
+                    //}
+                    MoveSumo(true, manualLookAheadPoint);
                 }
                 else
                 {
@@ -302,19 +308,36 @@ namespace tumvt.sumounity.PedestrianModel
             lookAheadMarker = rbMarker;
         }
 
-        private void MoveSumo()
+        private void MoveSumo(bool setManually = false, Vector2 manualLookAheadPoint = default)
         {
             // rb.isKinematic = true;
             rbMarker.x = rb.position.x;
             rbMarker.y = rb.position.z;
 
-            var (worldMovementVector, worldMovementSpeed, worldMovementDirection, absolutePositionError, lookAheadPoint) =
+            Vector2 worldMovementVector, lookAheadPoint;
+            float worldMovementSpeed, worldMovementDirection, absolutePositionError;
+            if (setManually)
+            {
+                (worldMovementVector, worldMovementSpeed, worldMovementDirection, absolutePositionError, lookAheadPoint) =
+                SumoPedestrianControl(
+                    ref sock,
+                    id,
+                    rb,
+                    ref lookAheadMarker,
+                    manualLookAheadPoint
+                );
+            }
+            else
+            {
+                (worldMovementVector, worldMovementSpeed, worldMovementDirection, absolutePositionError, lookAheadPoint) =
                 SumoPedestrianControl(
                     ref sock,
                     id,
                     rb,
                     ref lookAheadMarker
                 );
+            }
+            
 
             // set target speed based on move speed, sprint speed and if sprint is pressed
 
