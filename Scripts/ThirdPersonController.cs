@@ -5,7 +5,9 @@ using UnityEngine.InputSystem;
 #endif
 
 using tumvt.sumounity;
-using static tumvt.sumounity.Vehicle;  
+using static tumvt.sumounity.Vehicle;
+using UnityEngine.AI;
+using Unity.AI.Navigation; 
 
 /* Note: animations are called via the controller for both the character and capsule using animator null checks
  */
@@ -164,17 +166,26 @@ namespace tumvt.sumounity.PedestrianModel
         private float teleportTimer = 0f;
         private const float TELEPORT_DELAY = 4f;
 
+        // Ana: WIP: navigation mesh agent for pathfinding
+        [Header("Navigation")]
+        private NavMeshAgent navMeshAgent;
+        private bool isBoarding = false;
+        private Transform boardingTarget;
+        private bool inBus = false;
+        private float busHeightInWorld = 0f;
+        private float yPosInWorld = 0.0f;
+
         // UNITY COROUTINES
         private void Start()
         {
             _cinemachineTargetYaw = CinemachineCameraTarget.transform.rotation.eulerAngles.y;
-            
+
             _hasAnimator = TryGetComponent(out _animator);
             _controller = GetComponent<CharacterController>();
-#if ENABLE_INPUT_SYSTEM 
+#if ENABLE_INPUT_SYSTEM
             _playerInput = GetComponent<PlayerInput>();
 #else
-			Debug.LogError( "Starter Assets package is missing dependencies. Please use Tools/Starter Assets/Reinstall Dependencies to fix it");
+            Debug.LogError("Starter Assets package is missing dependencies. Please use Tools/Starter Assets/Reinstall Dependencies to fix it");
 #endif
 
             AssignAnimationIDs();
@@ -188,6 +199,10 @@ namespace tumvt.sumounity.PedestrianModel
             rb = GetComponent<Rigidbody>();
 
             InitializeSumoIntegration();
+
+            // NavMeshAgent
+            navMeshAgent = GetComponent<NavMeshAgent>();
+            navMeshAgent.enabled = false; // SUMO controls movement initially
 
         }
 
@@ -232,16 +247,43 @@ namespace tumvt.sumounity.PedestrianModel
                     teleportTimer = 0f;  // Reset timer when not inside vehicle
                     MoveSumo();
 
-                    
+
                 }
 
                 isCurrentlyInsideVehicle = isInsideVehicle;
             }
             else
             {
-                Debug.LogWarning("Set to Sumo vehicle, manual is not implemented");
+                // Debug.LogWarning("Set to Sumo vehicle, manual is not implemented");
+                // Debug.Log("Bus: No SUMO; MANUAL CONTROL");
+                if (isBoarding && navMeshAgent.enabled)
+                {
+                    // Arrived in bus
+                    if (!navMeshAgent.pathPending && navMeshAgent.remainingDistance <= navMeshAgent.stoppingDistance)
+                    {
+                        navMeshAgent.enabled = false;
+                        inBus = true;
+                        isBoarding = false;
+                        isSumoVehicle = true; // Re-enable Sumo vehicle control after boarding
+                    }                    
+                }
             }
         }
+
+        //Pathfinding and boarding logic
+        public void BeginBoarding(Vector3 targetPosition)
+        {
+            // Disable SUMO/custom movement
+            isSumoVehicle = false; // or your equivalent flag
+            navMeshAgent.enabled = true;
+            navMeshAgent.SetDestination(targetPosition);
+            isBoarding = true;
+            Debug.Log("Begin boarding towards " + targetPosition);
+            busHeightInWorld = targetPosition.y; // Store the bus height for teleporting later
+        }
+
+
+
 
 
         // SUMONITY
@@ -251,8 +293,8 @@ namespace tumvt.sumounity.PedestrianModel
             sock = GameObject.FindObjectOfType<SumoSocketClient>();
 
             // Initialize controllers
-            pidControllerDist = new PIDController(15.0f, 0.0f, 0.0f); 
-            pidControllerSpeed = new PIDController(1.0f, 0.0f, 0.0f); 
+            pidControllerDist = new PIDController(15.0f, 0.0f, 0.0f);
+            pidControllerSpeed = new PIDController(1.0f, 0.0f, 0.0f);
             bDrawGizmo = true;
         }
 
@@ -260,7 +302,16 @@ namespace tumvt.sumounity.PedestrianModel
         {
             Debug.LogWarning("Teleporting Sumo");
             Vector2 pos = PedestrianGetPosition(ref sock, id);
-            transform.position = new Vector3(pos.x, 0.0f, pos.y);
+            // transform.position = new Vector3(pos.x, 0.0f, pos.y);
+            if (inBus)
+            {
+                yPosInWorld = busHeightInWorld; // Keep the bus height
+            }
+            else
+            {
+                yPosInWorld = 0.0f; // Reset to ground level
+            }
+            transform.position = new Vector3(pos.x, yPosInWorld, pos.y);
             rbMarker.x = pos.x;
             rbMarker.y = pos.y;
             lookAheadMarker = rbMarker;
