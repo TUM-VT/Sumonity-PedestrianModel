@@ -1,4 +1,6 @@
 ﻿using UnityEngine;
+using System.Collections;
+using System.Collections.Generic;
 #if ENABLE_INPUT_SYSTEM 
 using UnityEngine.InputSystem;
 
@@ -146,8 +148,9 @@ namespace tumvt.sumounity.PedestrianModel
 
         private bool _hasAnimator;
         private Vector3 _targetDirection;
-        
 
+        [SerializeField]
+        private Vector3 targetPosition;
         private bool IsCurrentDeviceMouse
         {
             get
@@ -155,7 +158,7 @@ namespace tumvt.sumounity.PedestrianModel
 #if ENABLE_INPUT_SYSTEM
                 return _playerInput.currentControlScheme == "KeyboardMouse";
 #else
-				return false;
+                return false;
 #endif
             }
         }
@@ -174,6 +177,10 @@ namespace tumvt.sumounity.PedestrianModel
         private bool inBus = false;
         private float busHeightInWorld = 0f;
         private float yPosInWorld = 0.0f;
+        private Vector3 localPositionInBus;
+        private bool hasInitializedBusPosition;
+        private List<Vector3> assignedPassengerSpots = new List<Vector3>();
+
 
         // UNITY COROUTINES
         private void Start()
@@ -254,7 +261,6 @@ namespace tumvt.sumounity.PedestrianModel
             }
             else
             {
-                // Debug.LogWarning("Set to Sumo vehicle, manual is not implemented");
                 // Debug.Log("Bus: No SUMO; MANUAL CONTROL");
                 if (isBoarding && navMeshAgent.enabled)
                 {
@@ -271,15 +277,84 @@ namespace tumvt.sumounity.PedestrianModel
         }
 
         //Pathfinding and boarding logic
-        public void BeginBoarding(Vector3 targetPosition)
+        public void BeginBoarding(Bounds busFloorBounds)
         {
             // Disable SUMO/custom movement
-            isSumoVehicle = false; // or your equivalent flag
+            isSumoVehicle = false;
             navMeshAgent.enabled = true;
+            busHeightInWorld = busFloorBounds.center.y; // Store the bus height for teleporting later
+            targetPosition = GetRandomPositionOnBusFloor(busFloorBounds);
             navMeshAgent.SetDestination(targetPosition);
             isBoarding = true;
-            Debug.Log("Begin boarding towards " + targetPosition);
-            busHeightInWorld = targetPosition.y; // Store the bus height for teleporting later
+            Debug.Log("Passenger began bus boarding: " + gameObject.name + " towards " + targetPosition);
+        }
+
+        // Make sure pedestrians that missed the bus are set to SUMO vehicle control
+        public void SetToSumoVehicle()
+        {   
+            // Debug.Log("Set to Sumo Vehicle for " + gameObject.name);
+            isSumoVehicle = true;
+            navMeshAgent.enabled = false;
+        }
+
+        public void ExitBus()
+        {
+            inBus = false;
+            hasInitializedBusPosition = false;
+            localPositionInBus = Vector3.zero;
+        }
+
+        private Vector3 GetRandomPositionOnBusFloor(Bounds busBounds, float minDistance = 0.8f, int attempts = 20)
+        {
+            for (int i = 0; i < attempts; i++)
+            {
+                Vector3 randomPoint = new Vector3(
+                    Random.Range(busBounds.min.x, busBounds.max.x),
+                    busBounds.center.y,
+                    Random.Range(busBounds.min.z, busBounds.max.z)
+                );
+
+                Debug.Log("Random point " + i + " inside bus area: " + randomPoint);
+
+                NavMeshHit hit;
+                if (NavMesh.SamplePosition(randomPoint, out hit, 0.2f, NavMesh.AllAreas)) // 1 is the default walkable area
+                {
+                    // Visualize the sampled position with a red star
+                    GameObject star = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                    star.transform.position = hit.position;
+                    star.transform.localScale = new Vector3(0.2f, 0.2f, 0.2f);
+                    star.GetComponent<Renderer>().material.color = Color.red;
+                    
+                    bool tooCloseOrOutside = false;
+                    if (!busBounds.Contains(hit.position) || hit.position.y != busHeightInWorld)
+                    {
+                        tooCloseOrOutside = true;
+                        Debug.Log("Position " + hit.position + "is outside bounds");
+                    }
+
+                    if (tooCloseOrOutside) continue;
+                    
+                    foreach (Vector3 spot in assignedPassengerSpots)
+                    {
+                        if (Vector3.Distance(hit.position, spot) < minDistance)
+                        {
+                            tooCloseOrOutside = true;
+                            Debug.Log("Position " + hit.position + "is too close: " + Vector3.Distance(hit.position, spot));
+                            break;
+                        }
+                    }
+                    
+                    if (!tooCloseOrOutside)
+                    {
+                        assignedPassengerSpots.Add(hit.position);
+                        Debug.Log("Found valid random point inside bus area: " + hit.position);
+                        return hit.position;
+                    }
+                }
+            }
+
+            Debug.Log("Could not find random point inside bus area");
+            return busBounds.center;  // fallback
         }
 
 
@@ -300,20 +375,40 @@ namespace tumvt.sumounity.PedestrianModel
 
         private void TeleportSumo()
         {
-            Debug.LogWarning("Teleporting Sumo");
             Vector2 pos = PedestrianGetPosition(ref sock, id);
-            // transform.position = new Vector3(pos.x, 0.0f, pos.y);
+            
             if (inBus)
             {
-                yPosInWorld = busHeightInWorld; // Keep the bus height
+                // Store initial offset from SUMO position if we haven't yet
+                if (!hasInitializedBusPosition)
+                {
+                    // Calculate offset between current position and SUMO position
+                    localPositionInBus = new Vector3(
+                        transform.position.x - pos.x,
+                        0f,  // Y offset not needed since we use busHeightInWorld
+                        transform.position.z - pos.y
+                    );
+                    hasInitializedBusPosition = true;
+                    Debug.Log($"Stored bus position offset: {localPositionInBus}");
+                }
+
+                // Apply offset to current SUMO position
+                transform.position = new Vector3(
+                    pos.x + localPositionInBus.x,
+                    busHeightInWorld,
+                    pos.y + localPositionInBus.z
+                );
             }
             else
             {
-                yPosInWorld = 0.0f; // Reset to ground level
+                // Reset storage and use SUMO position when outside bus
+                hasInitializedBusPosition = false;
+                transform.position = new Vector3(pos.x, 0.0f, pos.y);
             }
-            transform.position = new Vector3(pos.x, yPosInWorld, pos.y);
-            rbMarker.x = pos.x;
-            rbMarker.y = pos.y;
+
+            // Debug.Log($"Teleported {(inBus ? "in bus" : "outside")} to: {transform.position}");
+            rbMarker.x = transform.position.x;
+            rbMarker.y = transform.position.z;
             lookAheadMarker = rbMarker;
         }
 
